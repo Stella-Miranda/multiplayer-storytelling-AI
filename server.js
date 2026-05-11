@@ -1,48 +1,90 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const path = require("path");
+import sys
+import os
+import warnings
+import logging
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+from huggingface_hub import hf_hub_download
+from llama_cpp import Llama
 
-// Serve static files from /public
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
+warnings.filterwarnings("ignore")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
-// Track online users: socket.id -> username
-const users = {};
+# =========================
+# LOAD MODELS
+# =========================
 
-io.on("connection", (socket) => {
-  console.log(`[+] Connected: ${socket.id}`);
+phi_path = hf_hub_download(
+    repo_id="unsloth/Phi-4-mini-instruct-GGUF",
+    filename="Phi-4-mini-instruct-Q4_K_M.gguf",
+    local_dir="."
+)
 
-  // User joins with a chosen name
-  socket.on("join", (username) => {
-    users[socket.id] = username;
-    io.emit("system", `${username} joined the chat`);
-    io.emit("user-list", Object.values(users));
-    console.log(`[join] ${username}`);
-  });
+llama_path = hf_hub_download(
+    repo_id="MaziyarPanahi/Llama-3-8B-Instruct-v0.1-GGUF",
+    filename="Llama-3-8B-Instruct-v0.1.Q4_K_M.gguf",
+    local_dir="."
+)
 
-  // User sends a message
-  socket.on("message", (text) => {
-    const username = users[socket.id] || "Anonymous";
-    io.emit("message", { username, text, time: new Date().toLocaleTimeString() });
-  });
+compressor = Llama(
+    model_path=phi_path,
+    n_ctx=8192,
+    n_threads=4,
+    verbose=False
+)
 
-  // User disconnects
-  socket.on("disconnect", () => {
-    const username = users[socket.id];
-    if (username) {
-      delete users[socket.id];
-      io.emit("system", `${username} left the chat`);
-      io.emit("user-list", Object.values(users));
-      console.log(`[-] ${username} disconnected`);
-    }
-  });
-});
+brain = Llama(
+    model_path=llama_path,
+    n_ctx=2048,
+    n_threads=4,
+    verbose=False
+)
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+# =========================
+# RECEIVE PROMPT
+# =========================
+
+user_input = sys.stdin.read()
+
+# =========================
+# COMPRESS
+# =========================
+
+compression_prompt = f"""
+<|user|>
+Summarize this text into a dense, fact-heavy prompt for another AI:
+
+{user_input}
+<|end|>
+<|assistant|>
+"""
+
+compression_output = compressor(
+    compression_prompt,
+    max_tokens=512,
+    stop=["<|end|>"]
+)
+
+compressed_text = compression_output["choices"][0]["text"].strip()
+
+# =========================
+# FINAL RESPONSE
+# =========================
+
+full_prompt = f"""
+<|begin_of_text|>
+<|start_header_id|>user<|end_header_id|>
+
+{compressed_text}
+<|eot_id|>
+<|start_header_id|>assistant<|end_header_id|>
+"""
+
+output = brain(
+    full_prompt,
+    max_tokens=512,
+    stop=["<|eot_id|>"]
+)
+
+response = output["choices"][0]["text"].strip()
+
+print(response)
