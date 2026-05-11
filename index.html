@@ -19,7 +19,63 @@
       --sys: #444;
       --radius: 4px;
     }
+    #top-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
+    #mode-toggle {
+      background: #1b2b44;
+      color: #7cc4ff;
+      border: 1px solid #2f4d74;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.72rem;
+      padding: 7px 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: 0.15s;
+    }
+
+    #mode-toggle.orange {
+      background: #3b2400;
+      color: #ffb347;
+      border-color: #6b3d00;
+    }
+
+    #ai-send-btn {
+      background: #ff9f1a;
+      color: #000;
+      border: none;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem;
+      padding: 10px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    #ai-send-btn:hover {
+      opacity: 0.85;
+    }
+
+    .msg.orange .msg-bubble {
+      background: #2a1a00;
+      border-color: #6b3d00;
+    }
+
+    .msg.orange .msg-meta {
+      color: #ffb347;
+    }
+
+    .msg.ai .msg-bubble {
+      background: #1d0029;
+      border-color: #5e1f7a;
+    }
+
+    .msg.ai .msg-meta {
+      color: #d58cff;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -287,85 +343,251 @@
   </div>
 
   <div id="input-bar">
-    <input id="msg-input" type="text" placeholder="type a message…" maxlength="500" autocomplete="off" />
+  
+    <div id="top-controls">
+      <button id="mode-toggle">BLUE MODE</button>
+    </div>
+  
+    <input
+      id="msg-input"
+      type="text"
+      placeholder="type a message…"
+      maxlength="500"
+      autocomplete="off"
+    />
+  
     <button id="send-btn">send</button>
+    <button id="ai-send-btn">Send to AI</button>
+  
   </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+
 <script>
   const socket = io();
-  let myName = "";
 
-  // Elements
+  let myName = "";
+  let currentMode = "blue";
+
+  // =========================
+  // ELEMENTS
+  // =========================
+
   const joinScreen  = document.getElementById("join-screen");
   const chatScreen  = document.getElementById("chat-screen");
+
   const nameInput   = document.getElementById("name-input");
   const joinBtn     = document.getElementById("join-btn");
+
   const messages    = document.getElementById("messages");
+
   const msgInput    = document.getElementById("msg-input");
+
   const sendBtn     = document.getElementById("send-btn");
+  const aiSendBtn   = document.getElementById("ai-send-btn");
+
+  const modeToggle  = document.getElementById("mode-toggle");
+
   const userList    = document.getElementById("user-list");
   const onlineCount = document.getElementById("online-count");
 
-  // Join
+  // =========================
+  // JOIN
+  // =========================
+
   function join() {
     const name = nameInput.value.trim();
-    if (!name) return nameInput.focus();
+
+    if (!name) {
+      nameInput.focus();
+      return;
+    }
+
     myName = name;
+
     socket.emit("join", name);
+
     joinScreen.style.display = "none";
     chatScreen.style.display = "flex";
+
     msgInput.focus();
   }
 
   joinBtn.addEventListener("click", join);
-  nameInput.addEventListener("keydown", e => e.key === "Enter" && join());
 
-  // Send message
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") join();
+  });
+
+  // =========================
+  // MODE TOGGLE
+  // =========================
+
+  function updateModeUI() {
+
+    if (currentMode === "blue") {
+
+      modeToggle.textContent = "BLUE MODE";
+      modeToggle.classList.remove("orange");
+
+      msgInput.placeholder =
+        "casual public chat...";
+
+    } else {
+
+      modeToggle.textContent = "ORANGE MODE";
+      modeToggle.classList.add("orange");
+
+      msgInput.placeholder =
+        "building AI context...";
+    }
+  }
+
+  modeToggle.addEventListener("click", () => {
+
+    currentMode =
+      currentMode === "blue"
+        ? "orange"
+        : "blue";
+
+    updateModeUI();
+  });
+
+  updateModeUI();
+
+  // =========================
+  // SEND MESSAGE
+  // =========================
+
   function send() {
+
     const text = msgInput.value.trim();
+
     if (!text) return;
-    socket.emit("message", text);
+
+    // -------------------------
+    // BLUE MODE
+    // -------------------------
+
+    if (currentMode === "blue") {
+
+      socket.emit("message", text);
+
+    }
+
+    // -------------------------
+    // ORANGE MODE
+    // -------------------------
+
+    else {
+
+      socket.emit("ai-message", text);
+
+    }
+
     msgInput.value = "";
     msgInput.focus();
   }
 
   sendBtn.addEventListener("click", send);
-  msgInput.addEventListener("keydown", e => e.key === "Enter" && send());
 
-  // Receive message
-  socket.on("message", ({ username, text, time }) => {
+  msgInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+
+  // =========================
+  // SEND TO AI
+  // =========================
+
+  aiSendBtn.addEventListener("click", () => {
+
+    socket.emit("send-to-ai");
+
+  });
+
+  // =========================
+  // RECEIVE MESSAGES
+  // =========================
+
+  socket.on("message", ({ username, text, time, mode }) => {
+
     const isSelf = username === myName;
+
     const wrap = document.createElement("div");
-    wrap.className = `msg ${isSelf ? "self" : "other"}`;
+
+    let extraClass = "";
+
+    if (mode === "orange") {
+      extraClass = "orange";
+    }
+
+    if (mode === "ai") {
+      extraClass = "ai";
+    }
+
+    wrap.className =
+      `msg ${isSelf ? "self" : "other"} ${extraClass}`;
+
     wrap.innerHTML = `
-      <div class="msg-meta">${isSelf ? "you" : username} · ${time}</div>
-      <div class="msg-bubble">${escHtml(text)}</div>
+      <div class="msg-meta">
+        ${isSelf ? "you" : escHtml(username)} · ${time}
+      </div>
+
+      <div class="msg-bubble">
+        ${escHtml(text)}
+      </div>
     `;
+
     messages.appendChild(wrap);
+
     messages.scrollTop = messages.scrollHeight;
   });
 
-  // System message
+  // =========================
+  // SYSTEM MESSAGE
+  // =========================
+
   socket.on("system", (text) => {
+
     const el = document.createElement("div");
+
     el.className = "sys-msg";
+
     el.textContent = text;
+
     messages.appendChild(el);
+
     messages.scrollTop = messages.scrollHeight;
   });
 
-  // User list
+  // =========================
+  // USER LIST
+  // =========================
+
   socket.on("user-list", (users) => {
-    onlineCount.innerHTML = `<b>${users.length}</b> online`;
-    userList.innerHTML = users.map(u =>
-      `<div class="user-item"><span class="dot"></span>${escHtml(u)}</div>`
-    ).join("");
+
+    onlineCount.innerHTML =
+      `<b>${users.length}</b> online`;
+
+    userList.innerHTML = users.map(u => `
+      <div class="user-item">
+        <span class="dot"></span>
+        ${escHtml(u)}
+      </div>
+    `).join("");
   });
+
+  // =========================
+  // ESCAPE HTML
+  // =========================
 
   function escHtml(str) {
-    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 </script>
 </body>
